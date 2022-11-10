@@ -13,111 +13,120 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.*;
+import java.util.Properties;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 public class Main {
-    public static void main(String[] args) throws IOException {
+    static String zipName;
+    static String loadAddress;
+    static String resultAddress;
+    static String command;
+    static String arg;
 
-        if (args.length == 2) {
+    public static void main(String[] args) {
 
-            String command = args[0];
-            String arg = args[1];
+        try {
+            Properties props = new Properties();
+            ClassLoader loader = Thread.currentThread().getContextClassLoader();
+            InputStream stream = loader.getResourceAsStream("parser.properties");
+            props.load(stream);
 
-            if (command.equals("load")) {
+            zipName = props.getProperty("parser.zipName");
+            loadAddress = props.getProperty("parser.loadAddress");
+            resultAddress = props.getProperty("parser.resultAddress");
 
-                File dir = new File(String.valueOf(arg));
-                if (dir.isDirectory()) {
+            if (args.length == 2) {
 
-                    String zipName = arg + "\\dirCompressed.zip";
+                command = args[0];
+                arg = args[1];
 
-                    File fileToDelete = new File(zipName);
-                    if (fileToDelete.exists()) {
-                        if (fileToDelete.delete())
-                        System.out.println("Zip has been deleted after load");
-                    }
-
-                    try {
-                        FileOutputStream fos = new FileOutputStream(zipName);
-                        ZipOutputStream zipOut = new ZipOutputStream(fos);
-                        File fileToZip = new File(arg);
-
-                        zipFile(fileToZip, fileToZip.getName(), zipOut);
-                        zipOut.close();
-                        fos.close();
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-
-                    CloseableHttpClient httpClient = HttpClients.createDefault();
-                    HttpPost uploadFile = new HttpPost("http://localhost:8081/api/requests/load");
-                    MultipartEntityBuilder builder = MultipartEntityBuilder.create();
-                    File f = new File(zipName);
-                    try {
-                        builder.addBinaryBody(
-                                "file",
-                                new FileInputStream(f),
-                                ContentType.APPLICATION_OCTET_STREAM,
-                                f.getName()
-                        );
-                    } catch (FileNotFoundException e) {
-                        e.printStackTrace();
-                    }
-
-                    HttpEntity multipart = builder.build();
-                    uploadFile.setEntity(multipart);
-                    CloseableHttpResponse response = null;
-                    try {
-                        response = httpClient.execute(uploadFile);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    HttpEntity responseEntity = response.getEntity();
-                    String reqId = EntityUtils.toString(responseEntity);
-
-                    System.out.println("Request id: " + reqId);
-
+                if (command.equals("load")) {
+                    load();
+                } else if (command.equals("result")) {
+                    result();
                 } else {
-                    System.out.println("Second argument is not a directory");
+                    System.out.println("Unknown command");
                 }
-
-            } else if (command.equals("result")) {
-
-                CloseableHttpClient httpClient = HttpClients.createDefault();
-                HttpGet request = new HttpGet("http://localhost:8081/api/requests/result/" + arg);
-                CloseableHttpResponse response = httpClient.execute(request);
-
-                HttpEntity responseEntity = response.getEntity();
-                if (response.getStatusLine().getStatusCode() == 200) {
-                    String jsonStr = EntityUtils.toString(responseEntity);
-                    JSONObject res = new JSONObject(jsonStr);
-                    String status = res.getJSONObject("status").getString("name");
-                    System.out.println("Request id: " + res.getInt("id") + ", Status: " + status);
-                    JSONArray resultList = res.getJSONArray("resultList");
-
-                    if (resultList.length() > 0) {
-                        System.out.println("Parsing result:");
-                        for (int i = 0; i < resultList.length(); i++) {
-                            JSONObject ob = resultList.getJSONObject(i);
-                            System.out.println("Content: " + ob.getString("content"));
-                            System.out.println("Is found in files: " + ob.getJSONArray("files"));
-                        }
-                    }
-                } else {
-                    System.out.println("Server error: " + response.getStatusLine());
-                }
-
             } else {
-                System.out.println("Unknown command");
+                System.out.println("Wrong arguments quantity");
             }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static void load() throws IOException {
+
+        File dir = new File(String.valueOf(arg));
+        if (dir.isDirectory()) {
+
+            File tempFile = File.createTempFile(zipName, "tmp");
+            tempFile.deleteOnExit();
+
+            String zipPath = tempFile.getPath();
+
+            FileOutputStream fos = new FileOutputStream(zipPath);
+            ZipOutputStream zipOut = new ZipOutputStream(fos);
+            File fileToZip = new File(arg);
+
+            zipFile(fileToZip, fileToZip.getName(), zipOut);
+            zipOut.close();
+            fos.close();
+
+            CloseableHttpClient httpClient = HttpClients.createDefault();
+            HttpPost uploadFile = new HttpPost(loadAddress);
+            MultipartEntityBuilder builder = MultipartEntityBuilder.create();
+            File f = new File(zipPath);
+
+            builder.addBinaryBody(
+                    "file",
+                    new FileInputStream(f),
+                    ContentType.APPLICATION_OCTET_STREAM,
+                    f.getName()
+            );
+
+
+            HttpEntity multipart = builder.build();
+            uploadFile.setEntity(multipart);
+            CloseableHttpResponse response = httpClient.execute(uploadFile);
+
+            HttpEntity responseEntity = response.getEntity();
+            String reqId = EntityUtils.toString(responseEntity);
+
+            System.out.println("Request id: " + reqId);
 
         } else {
-            System.out.println("Wrong arguments quantity");
+            System.out.println("Second argument is not a directory");
         }
 
+    }
 
+    private static void result() throws IOException {
 
+        CloseableHttpClient httpClient = HttpClients.createDefault();
+        HttpGet request = new HttpGet(resultAddress+ arg);
+        CloseableHttpResponse response = httpClient.execute(request);
 
+        HttpEntity responseEntity = response.getEntity();
+        if (response.getStatusLine().getStatusCode() == 200) {
+            String jsonStr = EntityUtils.toString(responseEntity);
+            JSONObject res = new JSONObject(jsonStr);
+            String status = res.getJSONObject("status").getString("name");
+            System.out.println("Request id: " + res.getInt("id") + ", Status: " + status);
+            JSONArray resultList = res.getJSONArray("resultList");
+
+            if (resultList.length() > 0) {
+                System.out.println("Parsing result:");
+                for (int i = 0; i < resultList.length(); i++) {
+                    JSONObject ob = resultList.getJSONObject(i);
+                    System.out.println("Content: " + ob.getString("content"));
+                    System.out.println("Is found in files: " + ob.getJSONArray("files"));
+                }
+            }
+        } else {
+            System.out.println("Server error: " + response.getStatusLine());
+        }
     }
 
     private static void zipFile(File fileToZip, String fileName, ZipOutputStream zipOut) throws IOException {
@@ -148,4 +157,5 @@ public class Main {
         }
         fis.close();
     }
+
 }
